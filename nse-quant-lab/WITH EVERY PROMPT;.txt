@@ -1,0 +1,522 @@
+WITH EVERY PROMPT;
+Shell / commands:
+- I am on Windows and I want commands for the classic Command Prompt (cmd.exe), NOT PowerShell and NOT bash.
+- Use syntax like:
+  - python -m venv .venv
+  - .venv\Scripts\activate
+  - pip install -r requirements.txt
+- Do NOT use PowerShell-specific syntax (no ./, no & , no ${}, no backticks).
+- Do NOT use Unix-only commands like source, ls, export, etc.
+- If you show file listings or navigation, use:
+  - dir
+  - cd app\api
+  - etc.
+---------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+You are a pair-programming assistant for a Python-based quantitative trading research platform.
+
+Behaviors / skills to use together:
+- Senior Software Architect: design clean, modular architectures, consistent naming, and clear boundaries between data, engine, API, UI, and jobs.
+- Senior Python Backend Engineer (FastAPI, Pydantic, SQLAlchemy, DuckDB, Postgres).
+- Quantitative Developer: comfortable with pandas, NumPy, vectorbt, technical indicators, portfolio metrics, and backtesting logic.
+- Data Engineer: robust data ingestion from NSE (NSEpy/nsepython), schema design, idempotent ETL into DuckDB/Postgres.
+- Testing & DevEx Engineer: write pytest tests, docstrings, and README snippets; keep commands simple (make/poetry/uv).
+- Code Reviewer: proactively point out potential bugs (timezones, NaNs, missing data, etc.) and suggest small refactors.
+
+General rules:
+- Use Python 3.11+.
+- Prefer simple, explicit code over magic.
+- Keep modules small and cohesive.
+- After generating code for a module, also generate:
+  - A short progress log line to append to `docs/progress.md`.
+  - A short “how to run up to this point” block to append under a new heading in `docs/run_instructions.md`.
+- Assume the project root is `nse-quant-lab/`.
+
+When I say “next module”, continue the same style and conventions.
+------------------------------------------------------------------------------------------------------------------------------------
+
+MODULE 1 – PROJECT SCAFFOLDING
+
+Goal:
+Create the initial project skeleton for a Python-based NSE quant research platform called `nse-quant-lab`.
+
+Architecture:
+- Python 3.11+
+- Key libraries: fastapi, uvicorn, pydantic, pandas, numpy, vectorbt, backtesting, backtrader, ta-lib, pyportfolioopt, ffn, pyfolio, nsepy, nsepython, duckdb, asyncpg (or psycopg2-binary), redis, apscheduler, streamlit, plotly.
+
+Desired folder structure (all under project root `nse-quant-lab/`):
+- app/
+  - api/
+  - data/
+  - engine/
+  - analytics/
+  - ui/
+  - jobs/
+  - models/
+- docs/
+  - progress.md
+  - run_instructions.md
+- data/
+- scripts/
+
+Tasks:
+1. Generate:
+   - pyproject.toml (or requirements.txt) with compatible pinned versions for all key libraries.
+   - Minimal `app/__init__.py` and `app/api/__init__.py`, etc.
+   - An initial `README.md` with:
+     - Short project description.
+     - High-level architecture diagram in text.
+2. Create `docs/progress.md` with a heading and a placeholder “Module logs” section.
+3. Create `docs/run_instructions.md` with a heading and a placeholder section for “After Module 1”.
+
+Conventions:
+- Use uv or venv + pip; show explicit shell commands.
+- Assume Linux/macOS-like shell.
+
+Output:
+- The file tree.
+- Contents of new files.
+- The shell commands to set up and install deps.
+
+Finally:
+- Give me a one-line bullet to append to docs/progress.md for Module 1.
+- Give me a short “Module 1 – How to run” section text to append to docs/run_instructions.md.
+
+------------------------------------------------------------------------------------------------------------------------------------
+
+MODULE 2 – DATABASE SCHEMAS (DUCKDB + POSTGRES)
+
+Context:
+- Project skeleton from Module 1 is in place.
+- I want:
+  - DuckDB file `data/prices.duckdb` for historical OHLCV data.
+  - PostgreSQL for symbols, strategies, backtests metadata.
+
+Design requirements:
+
+DuckDB:
+- DB file path: ./data/prices.duckdb
+- Table: prices
+  - symbol TEXT
+  - date DATE
+  - open DOUBLE
+  - high DOUBLE
+  - low DOUBLE
+  - close DOUBLE
+  - volume BIGINT
+  - source TEXT
+  - PRIMARY KEY (symbol, date)
+
+PostgreSQL:
+- Table symbols:
+  - id SERIAL PK
+  - symbol TEXT UNIQUE
+  - name TEXT
+  - exchange TEXT
+  - sector TEXT
+  - is_active BOOLEAN
+- Table strategies:
+  - id UUID PK
+  - name TEXT
+  - kind TEXT  -- e.g. 'sma_cross', 'rsi_reversion', 'buy_and_hold'
+  - params JSONB
+  - created_at TIMESTAMPTZ
+- Table backtests:
+  - id UUID PK
+  - strategy_id UUID (FK to strategies.id)
+  - symbol_universe TEXT[]
+  - date_start DATE
+  - date_end DATE
+  - status TEXT
+  - created_at TIMESTAMPTZ
+  - finished_at TIMESTAMPTZ
+  - summary JSONB
+  - duckdb_table TEXT  -- e.g. name of table or view holding detailed results
+
+Tasks:
+1. Generate SQL DDL for DuckDB and PostgreSQL.
+2. Create `app/models/db_config.py` that:
+   - Provides `get_duckdb_conn()` returning a duckdb connection to ./data/prices.duckdb.
+   - Provides async Postgres SQLAlchemy engine creation and session maker.
+3. Optionally create `app/models/__init__.py` with SQLAlchemy ORM models for symbols, strategies, backtests.
+
+Conventions:
+- Use SQLAlchemy 2.x style if you define ORM models.
+- Don’t overcomplicate; keep it minimal but production-viable.
+
+Output:
+- SQL DDL.
+- Python code.
+
+Finally:
+- Provide a one-line log for docs/progress.md (Module 2).
+- Provide a “Module 2 – How to run” section for docs/run_instructions.md describing:
+  - How to create DuckDB tables.
+  - How to apply Postgres migrations (even if just raw SQL).
+---------------------------------------------------------------------------------------------------------------
+MODULE 3 – DATA INGESTION FROM NSE (NSEpy / nsepython)
+
+Context:
+- DB config exists (DuckDB + Postgres).
+- NSEpy/nsepython are installed.
+
+Goal:
+Implement a simple data ingestion module to fetch historical EOD data for a few NSE stocks and store into DuckDB.prices.
+
+Requirements:
+- Module: `app/data/nse_ingest.py`
+- Functions:
+  - `fetch_ohlcv(symbol: str, start: date, end: date) -> pandas.DataFrame`
+    - Use nsepy.get_history where possible.
+    - Ensure columns: symbol, date, open, high, low, close, volume, source.
+  - `upsert_prices(df: pandas.DataFrame) -> None`
+    - Connect to DuckDB via `get_duckdb_conn()`.
+    - Insert or replace rows based on (symbol, date).
+- A small CLI entry point:
+  - Under `if __name__ == "__main__":`:
+    - Define a universe list, e.g. ['RELIANCE', 'INFY', 'HDFCBANK'].
+    - Fetch last 3–5 years of data.
+    - Upsert into DuckDB.
+
+Design notes:
+- Be robust to missing days and NaNs.
+- Use tqdm or basic logging if convenient.
+
+Output:
+- Complete `nse_ingest.py` code.
+- Example commands to run it from project root.
+
+Finally:
+- Provide a one-line log entry for docs/progress.md (Module 3).
+- Provide a “Module 3 – How to run” snippet for docs/run_instructions.md that:
+  - Explains how to run the ingest script.
+  - Explains how to verify row counts in DuckDB with a simple query.
+-----------------------------------------------------------------------------------------------------------------------------
+MODULE 4 – INDICATORS AND BASE STRATEGY
+
+Context:
+- Data is in DuckDB.prices.
+- Need reusable indicator functions and a base strategy interface.
+
+Goal:
+Create:
+1) `app/engine/indicators.py`
+2) `app/engine/base.py`
+
+Requirements:
+
+`app/engine/indicators.py`:
+- Implement pandas-friendly wrappers, ideally using TA-Lib:
+  - `sma(series: pd.Series, window: int) -> pd.Series`
+  - `ema(series: pd.Series, window: int) -> pd.Series`
+  - `rsi(series: pd.Series, window: int) -> pd.Series`
+  - `bollinger_bands(series: pd.Series, window: int, n_std: float) -> tuple[pd.Series, pd.Series, pd.Series]`
+- Handle NaNs in a reasonable way (e.g. drop initial window, or forward-fill where appropriate).
+
+`app/engine/base.py`:
+- Define a `StrategyConfig` Pydantic model:
+  - name: str
+  - kind: str
+  - params: dict[str, Any]
+  - universe: list[str]
+  - date_start: datetime.date
+  - date_end: datetime.date
+- Define an abstract `BaseStrategy` class:
+  - __init__(self, config: StrategyConfig, prices: pd.DataFrame)
+  - `generate_signals(self) -> pd.DataFrame`:
+    - Returns a DataFrame indexed by date with at least one column `signal` in {-1, 0, 1} or a wide format with columns per symbol.
+  - `name` property.
+
+Output:
+- Implementation for both modules with type hints and docstrings.
+
+Finally:
+- Provide one-line progress log for docs/progress.md (Module 4).
+- Provide “Module 4 – How to run” instructions for docs/run_instructions.md:
+  - How to import indicators and BaseStrategy in a simple Python REPL / notebook to sanity check (no full backtest yet).
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+MODULE 5 – STRATEGY IMPLEMENTATIONS WITH VECTORBT
+
+Context:
+- We have indicators and BaseStrategy.
+- Prices are in DuckDB.
+- vectorbt is available to do fast backtests.
+
+Goal:
+Implement core strategies and a generic runner.
+
+File: `app/engine/strategies.py`
+
+Requirements:
+1. Define a `BacktestResult` dataclass with:
+   - equity: pd.Series         # equity curve
+   - trades_count: int
+   - total_return: float
+   - max_drawdown: float
+   - sharpe: float
+   - other_metrics: dict[str, float]
+
+2. Implement:
+   - `SMACrossStrategy(BaseStrategy)`:
+     - params: fast_window, slow_window.
+     - Logic: long when fast_sma > slow_sma, flat otherwise (per symbol).
+   - `RSIMeanReversionStrategy(BaseStrategy)`:
+     - params: rsi_window, lower, upper.
+     - Logic: long when RSI < lower, exit when RSI > upper.
+   - `BuyAndHoldStrategy(BaseStrategy)`:
+     - No complex params; buy at first bar, hold until end (per symbol).
+
+3. Implement a helper:
+   - `run_vectorbt_backtest(strategy: BaseStrategy, prices: pd.DataFrame) -> BacktestResult`
+   - Use vectorbt Portfolio.from_signals or similar:
+     - Create entries/exits from the strategy signals.
+     - Assume fixed fee (e.g. 0.1% per trade) and no leverage.
+     - Compute equity curve and summary metrics.
+
+Conventions:
+- Use prices DataFrame with DateTimeIndex and symbol columns of close prices.
+- If needed, write a small helper to pivot DuckDB data into this wide format.
+
+Output:
+- Full `strategies.py` module.
+
+Finally:
+- Give the log entry for docs/progress.md (Module 5).
+- Give “Module 5 – How to run” instructions for docs/run_instructions.md:
+  - How to run a simple SMA cross backtest from a Python shell using DuckDB data and print summary metrics (without FastAPI or Streamlit yet).
+
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+MODULE 6 – ANALYTICS (ffn, pyfolio, PyPortfolioOpt)
+
+Context:
+- We have BacktestResult with equity curve.
+- Need metrics and portfolio-level benchmarks.
+
+Goal:
+Create:
+- `app/analytics/metrics.py`
+- `app/analytics/benchmarks.py`
+
+Requirements:
+
+`metrics.py`:
+- Function `compute_performance(equity: pd.Series, benchmark: pd.Series | None = None) -> dict[str, float]`:
+  - Use ffn to compute:
+    - total_return
+    - cagr
+    - max_drawdown
+    - volatility
+    - sharpe_ratio
+    - calmar_ratio
+  - If benchmark is provided, compute tracking error and information ratio.
+
+`benchmarks.py`:
+- Given:
+  - `returns: pd.DataFrame` of asset returns.
+  - `risk_free_rate: float` (annual, e.g. 0.05).
+- Implement functions:
+  - `equal_weight_portfolio(returns) -> dict` (weights and performance metrics).
+  - `max_sharpe_portfolio(returns, risk_free_rate) -> dict` using PyPortfolioOpt.
+- Reuse `compute_performance` to build the metrics dicts.
+
+Output:
+- Both modules with type hints.
+
+Finally:
+- Provide the progress log line for Module 6.
+- Provide “Module 6 – How to run” instructions:
+  - Example Python snippet: given a BacktestResult.equity, compute metrics and print them.
+  - Example of building an equal-weight portfolio from a returns DataFrame.
+
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------
+
+MODULE 7 – FASTAPI BACKTEST ENDPOINTS
+
+Context:
+- DB config, strategies, analytics implemented.
+- We now want to expose backtest creation and retrieval via FastAPI.
+
+Goal:
+Create FastAPI routers:
+- `app/api/backtests.py`
+- Wire into `app/api/main.py`.
+
+Requirements:
+
+Routes:
+1) POST `/backtests`
+   - Request model: includes StrategyConfig plus `strategy_kind` (string).
+   - Flow:
+     - Load prices for the given universe and date range from DuckDB.prices.
+     - Instantiate the chosen strategy class.
+     - Run `run_vectorbt_backtest`.
+     - Compute performance metrics and benchmark metrics.
+     - Insert a backtests row into Postgres (using summary JSON and duckdb_table reference).
+     - Return a response with:
+       - backtest_id (UUID)
+       - strategy_kind
+       - universe
+       - date range
+       - summary metrics
+       - benchmark metrics.
+
+2) GET `/backtests`
+   - Returns a list of recent backtests with summary metrics (from Postgres).
+
+3) GET `/backtests/{backtest_id}`
+   - Returns:
+     - metadata from Postgres
+     - summary metrics
+     - (optionally) an equity curve sample (e.g. downsampled for UI).
+
+Implementation notes:
+- Use Pydantic response models.
+- Keep SQL/ORM code reasonably simple.
+
+Output:
+- `backtests.py` router code.
+- Updated `main.py` that includes the router.
+
+Finally:
+- Provide a docs/progress.md log line for Module 7.
+- Provide “Module 7 – How to run” instructions:
+  - uvicorn command to run FastAPI.
+  - Example curl or HTTPie commands to POST a backtest and GET it.
+
+---------------------------------------------------------------------------------------------------------------------------------------
+
+MODULE 8 – STREAMLIT UI
+
+Context:
+- FastAPI /backtests endpoints exist.
+- Need a simple research UI using Streamlit + Plotly.
+
+Goal:
+Create `app/ui/main.py` that:
+
+1. Provides a sidebar navigation with:
+   - "Run Backtest"
+   - "Backtest List"
+
+2. "Run Backtest" page:
+   - Form fields:
+     - Strategy kind selectbox: ['sma_cross', 'rsi_reversion', 'buy_and_hold'].
+     - Universe: multiselect (just a small list of NSE symbols for now).
+     - Date start/end.
+     - Strategy-specific params (fast/slow windows, RSI thresholds) with sensible defaults.
+   - On submit:
+     - Calls FastAPI POST /backtests.
+     - Displays returned metrics in a table/key-value layout.
+
+3. "Backtest List" page:
+   - Calls GET /backtests.
+   - Shows a table of recent backtests.
+   - When user selects a backtest (e.g., a selectbox or clickable row substitute), call GET /backtests/{id} and:
+     - Plot equity curve (and benchmark) with Plotly.
+     - Plot drawdown curve if available.
+     - Show metrics.
+
+Implementation notes:
+- Use `requests` or `httpx` to call FastAPI.
+- Keep layout visually clean but don’t over-style.
+
+Output:
+- Full `app/ui/main.py` code.
+- Example command: `streamlit run app/ui/main.py`.
+
+Finally:
+- Provide a log entry for Module 8.
+- Provide “Module 8 – How to run” instructions:
+  - How to start FastAPI.
+  - How to start Streamlit.
+  - In which order to run them.
+
+-------------------------------------------------------------------------------------------------------------------------------------------
+
+MODULE 9 – APSCHEDULER JOBS (DAILY REFRESH + BENCHMARK RUNS)
+
+Context:
+- Data ingest module exists.
+- Backtests API works.
+
+Goal:
+Create `app/jobs/scheduler.py` that:
+
+Jobs:
+1. `refresh_prices_daily`:
+   - Runs every day at 18:30 Asia/Kolkata.
+   - For a configured list of symbols, fetches yesterday’s data via NSEpy/nsepython and upserts into DuckDB.
+
+2. `run_daily_benchmarks`:
+   - Runs every day at 22:00 Asia/Kolkata.
+   - Calls FastAPI POST /backtests for:
+     - Buy-and-hold
+     - SMA cross
+   - Universe: some small fixed list of symbols.
+   - Date range: e.g. last 90 days.
+
+Implementation:
+- Use APScheduler BackgroundScheduler with timezone set to Asia/Kolkata.
+- Log start and completion of each job.
+- When `python app/jobs/scheduler.py` is run, the scheduler should start and keep running.
+
+Output:
+- Complete `scheduler.py`.
+
+Finally:
+- Provide progress log text for Module 9.
+- Provide “Module 9 – How to run” instructions:
+  - How to start the scheduler and what to expect in logs.
+  - Reminder that FastAPI must be running for /backtests calls to succeed.
+
+--------------------------------------------------------------------------------------------------------------------------------------
+MODULE 10 – TESTS AND DOCUMENTATION
+
+Context:
+- Core modules are implemented.
+- Need basic pytest tests and refined docs.
+
+Goal:
+1) Add pytest tests under `tests/`:
+   - `tests/test_sma_strategy.py`:
+     - Create synthetic uptrend and downtrend price series.
+     - Run SMACrossStrategy and assert:
+       - Positive total_return on uptrend.
+       - Negative or low total_return on downtrend.
+   - `tests/test_api.py`:
+     - Use FastAPI TestClient against the app.
+     - Test GET /health.
+     - Test POST /backtests with a minimal BuyAndHold config and assert response contains backtest_id and metrics.
+
+2) Extend README:
+   - “Architecture overview” section describing layers: data, engine, analytics, API, UI, jobs.
+   - “Development workflow” section describing how to run:
+     - Data ingest.
+     - API.
+     - UI.
+     - Scheduler.
+     - Tests.
+   - “Adding a new strategy” section with step-by-step instructions.
+   - “Future roadmap” section mentioning:
+     - backtrader-based live/paper trading
+     - Riskfolio-Lib, alphalens integration
+     - QuantLib pricing
+     - Rust-based execution gateway.
+
+Output:
+- pytest test files.
+- README additions.
+
+Finally:
+- Provide log text for Module 10.
+- Provide “Module 10 – How to run” instructions:
+  - How to run `pytest`.
+  - How to quickly sanity check the whole system end-to-end (high-level sequence).
+
+
+
